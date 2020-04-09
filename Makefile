@@ -110,55 +110,19 @@ endif
 ##@ Build
 
 build:
-	@echo "Building ibm-management-ingress-operator binary"
-	@CGO_ENABLED=0 go build -o build/_output/bin/$(IMG) ./cmd/manager
-	@strip $(STRIP_FLAGS) build/_output/bin/$(IMG)
+	@echo "Building the $(IMAGE_NAME) binary for $(LOCAL_ARCH)..."
+	@GOARCH=$(LOCAL_ARCH) common/scripts/gobuild.sh build/_output/bin/$(IMAGE_NAME) ./cmd/manager
+	@strip $(STRIP_FLAGS) build/_output/bin/$(IMAGE_NAME)
 
-build-image-amd64: build $(CONFIG_DOCKER_TARGET)
-	$(eval ARCH := $(shell uname -m|sed 's/x86_64/amd64/'))
-	docker build -t $(REGISTRY)/$(IMG)-$(ARCH):$(VERSION) -f build/Dockerfile .
-	@\rm -f build/_output/bin/ibm-management-ingress-operator
-	@if [ $(BUILD_LOCALLY) -ne 1 ] && [ "$(ARCH)" = "amd64" ]; then docker push $(REGISTRY)/$(IMG)-$(ARCH):$(VERSION); fi
+build-push-image: build-image push-image
 
-push-image-amd64: build-image-amd64
-	@docker push $(REGISTRY)/$(IMG)-amd64:$(VERSION)
+build-image: build
+	@echo "Building the $(IMAGE_NAME) docker image for $(LOCAL_ARCH)..."
+	@docker build -t $(IMAGE_REPO)/$(IMAGE_NAME)-$(LOCAL_ARCH):$(VERSION) -f build/Dockerfile .
 
-# runs on amd64 machine
-build-image-ppc64le: $(CONFIG_DOCKER_TARGET)
-ifeq ($(LOCAL_OS),Linux)
-ifeq ($(LOCAL_ARCH),x86_64)
-	GOOS=linux GOARCH=ppc64le CGO_ENABLED=0 go build -o build/_output/bin/ibm-management-ingress-operator-ppc64le ./cmd/manager
-	docker run --rm --privileged multiarch/qemu-user-static:register --reset
-	docker build -t $(REGISTRY)/$(IMG)-ppc64le:$(VERSION) -f build/Dockerfile.ppc64le .
-	@\rm -f build/_output/bin/ibm-management-ingress-operator-ppc64le
-	@if [ $(BUILD_LOCALLY) -ne 1 ]; then docker push $(REGISTRY)/$(IMG)-ppc64le:$(VERSION); fi
-endif
-endif
-
-push-image-ppc64le: build-image-ppc64le
-ifeq ($(LOCAL_OS),Linux)
-ifeq ($(LOCAL_ARCH),x86_64)
-	@docker push $(REGISTRY)/$(IMG)-ppc64le:$(VERSION)
-endif
-endif
-
-# runs on amd64 machine
-build-image-s390x: $(CONFIG_DOCKER_TARGET)
-ifeq ($(LOCAL_OS),Linux)
-ifeq ($(LOCAL_ARCH),x86_64)
-	GOOS=linux GOARCH=s390x CGO_ENABLED=0 go build -o build/_output/bin/ibm-management-ingress-operator-s390x ./cmd/manager
-	docker run --rm --privileged multiarch/qemu-user-static:register --reset
-	docker build -t $(REGISTRY)/$(IMG)-s390x:$(VERSION) -f build/Dockerfile.s390x .
-	@\rm -f build/_output/bin/ibm-management-ingress-operator-s390x
-	@if [ $(BUILD_LOCALLY) -ne 1 ]; then docker push $(REGISTRY)/$(IMG)-s390x:$(VERSION); fi
-endif
-endif
-
-push-image-s390x: build-image-s390x
-ifeq ($(LOCAL_OS),Linux)
-ifeq ($(LOCAL_ARCH),x86_64)
-	@docker push $(REGISTRY)/$(IMG)-s390x:$(VERSION)
-endif
+push-image: $(CONFIG_DOCKER_TARGET) build-image
+	@echo "Pushing the $(IMAGE_NAME) docker image for $(LOCAL_ARCH)..."
+	@docker push $(IMAGE_REPO)/$(IMAGE_NAME)-$(LOCAL_ARCH):$(VERSION)
 endif
 
 ##@ Test
@@ -184,15 +148,8 @@ build-images: build-image-amd64 build-image-ppc64le build-image-s390x
 push-images: push-image-amd64 push-image-ppc64le push-image-s390x
 
 # multiarch-image section
-multiarch-image:
-ifeq ($(LOCAL_OS),Linux)
-ifeq ($(LOCAL_ARCH),x86_64)
-	@curl -L -o /tmp/manifest-tool https://github.com/estesp/manifest-tool/releases/download/v1.0.0/manifest-tool-linux-amd64
-	@chmod +x /tmp/manifest-tool
-	/tmp/manifest-tool push from-args --platforms linux/amd64,linux/ppc64le,linux/s390x --template $(REGISTRY)/$(IMG)-ARCH:$(VERSION) --target $(REGISTRY)/$(IMG) --ignore-missing
-	/tmp/manifest-tool push from-args --platforms linux/amd64,linux/ppc64le,linux/s390x --template $(REGISTRY)/$(IMG)-ARCH:$(VERSION) --target $(REGISTRY)/$(IMG):$(VERSION) --ignore-missing
-endif
-endif
+multiarch-image: $(CONFIG_DOCKER_TARGET)
+	@MAX_PULLING_RETRY=20 RETRY_INTERVAL=30 common/scripts/multiarch_image.sh $(IMAGE_REPO) $(IMAGE_NAME) $(VERSION)
 
 csv: ## Push CSV package to the catalog
 	@RELEASE=${CSV_VERSION} common/scripts/push-csv.sh
